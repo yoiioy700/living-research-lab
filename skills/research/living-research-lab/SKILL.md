@@ -129,9 +129,9 @@ research_db(action="detect_anomalies", topic="<TOPIC>", days=7)
 ```
 
 Flags:
-- 📈 **Volume spikes** (>200% increase vs previous period)
-- 🔴 **Sentiment flips** (positive→negative or vice versa)
-- 🆕 **New dominant tags** (tags that didn't exist before)
+-  **Volume spikes** (>200% increase vs previous period)
+-  **Sentiment flips** (positive→negative or vice versa)
+-  **New dominant tags** (tags that didn't exist before)
 
 If anomalies found, add them prominently to the report.
 
@@ -174,11 +174,11 @@ Generated: <date>  |  Sources this run: <N>  |  Total in DB: <total>
 - **[Post/Paper Title]** — [1-sentence finding] ([link])
 - ...
 
-## 💰 Open Bounties & Issues (If Any)
+##  Open Bounties & Issues (If Any)
 - **[Bounty/Issue Title]** — [Reward/Context] ([link])
 - ...
 
-## 🔬 Anomalies Detected (only if detect_anomalies returned items)
+##  Anomalies Detected (only if detect_anomalies returned items)
 - [SEVERITY]: [anomaly message]
 - ...
 
@@ -188,7 +188,7 @@ Volume change: [+/-X% vs previous period]
 Top tags: [tag1, tag2, tag3]
 Signal leader: [top scored finding from score_findings]
 
-## 🌱 Suggested Sub-Topics (only if suggest_subtopics returned items)
+##  Suggested Sub-Topics (only if suggest_subtopics returned items)
 - **[Subtopic Name]** — [reason] (mention count: N)
 - ...
 
@@ -265,7 +265,7 @@ research_db(action="suggest_subtopics", topic="<TOPIC>", days=14)
 ```
 
 If suggestions returned:
-1. List them in the report under `## 🌱 Suggested Sub-Topics`
+1. List them in the report under `##  Suggested Sub-Topics`
 2. For any subtopic with **5+ mentions**, auto-add it:
 
 ```
@@ -303,7 +303,7 @@ User: "riset tentang Solana DeFi"
 -> Spawn 4 subagents (Web + GitHub + Community + Bounty Hunter)
 -> Save findings to DB with topic="Solana DeFi"
 -> Run analytics (first run, no historical comparison)
--> Generate report (including 💰 Open Bounties section)
+-> Generate report (including  Open Bounties section)
 -> Set default alerts (sentiment_shift + volume_spike)
 -> Schedule daily cron "every 24h" to Telegram
 

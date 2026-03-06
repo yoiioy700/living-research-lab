@@ -10,19 +10,19 @@ Built for the **Nous Research Hermes Agent Hackathon**.
 
 ---
 
-## ✨ Features
+##  Features
 
 | Feature | Description |
 |---------|-------------|
-| 🚀 **4 Parallel Subagents** | Web News, GitHub, Community, and Bounty Hunter run simultaneously |
-| 🧠 **Signal vs Noise** | Trust scoring per source domain, composite ranking (trust × recency × engagement) |
-| 🔬 **Anomaly Detection** | Flags volume spikes (>200%), sentiment flips, new dominant tags |
-| 🌱 **Auto-Topic Evolution** | Suggests and auto-creates sub-topics when tag clusters reach threshold |
-| 💰 **Bounty Hunter** | Finds open bounties, paid issues, and job opportunities on GitHub/Gitcoin |
-| 💾 **Persistent Knowledge Base** | SQLite database persists across sessions (`~/.hermes/research.db`) |
-| 📊 **Structured Reports** | Executive summary, key findings, anomalies, bounties, trend analysis |
+|  **4 Parallel Subagents** | Web News, GitHub, Community, and Bounty Hunter run simultaneously |
+|  **Signal vs Noise** | Trust scoring per source domain, composite ranking (trust × recency × engagement) |
+|  **Anomaly Detection** | Flags volume spikes (>200%), sentiment flips, new dominant tags |
+|  **Auto-Topic Evolution** | Suggests and auto-creates sub-topics when tag clusters reach threshold |
+|  **Bounty Hunter** | Finds open bounties, paid issues, and job opportunities on GitHub/Gitcoin |
+|  **Persistent Knowledge Base** | SQLite database persists across sessions (`~/.hermes/research.db`) |
+|  **Structured Reports** | Executive summary, key findings, anomalies, bounties, trend analysis |
 | ⏰ **Automated Daily Updates** | Cron scheduler repeats research and delivers to Telegram |
-| 🛠️ **Auto-Skill Creation** | When 20+ findings accumulate, generates a dedicated specialized skill |
+|  **Auto-Skill Creation** | When 20+ findings accumulate, generates a dedicated specialized skill |
 
 ---
 
@@ -69,7 +69,7 @@ Confirm that `web`, `research`, and `delegation` toolsets show as available.
 
 ---
 
-## 🎯 Preset Workflows
+##  Preset Workflows
 
 ### 1. Crypto Research Mode
 
@@ -118,37 +118,37 @@ hermes chat -q "Suggest subtopics for Open Source LLMs. Auto-add any with 5+ men
 
 ```
 User request
-  │
-  ▼
+  
+  
 Hermes Agent loads Living Research Lab skill (SKILL.md)
-  │
-  ├── research_db: register topic, check alerts, detect anomalies
-  │
-  ▼
+  
+   research_db: register topic, check alerts, detect anomalies
+  
+  
 delegate_task (batch mode, 4 parallel subagents):
-  ├── Web News Agent       (web_search + web_extract)
-  ├── GitHub Agent         (repository + commit search)
-  ├── Community Agent      (Hacker News, Reddit, arXiv)
-  └── 💰 Bounty Hunter     (GitHub issues, Gitcoin, bounty platforms)
-  │
-  ▼
+   Web News Agent       (web_search + web_extract)
+   GitHub Agent         (repository + commit search)
+   Community Agent      (Hacker News, Reddit, arXiv)
+    Bounty Hunter     (GitHub issues, Gitcoin, bounty platforms)
+  
+  
 All findings saved to SQLite with auto-computed trust scores
-  │
-  ├── score_findings → rank by trust × recency × engagement
-  ├── detect_anomalies → flag volume spikes, sentiment flips, new tags
-  ├── suggest_subtopics → auto-evolve research scope
-  │
-  ▼
+  
+   score_findings → rank by trust × recency × engagement
+   detect_anomalies → flag volume spikes, sentiment flips, new tags
+   suggest_subtopics → auto-evolve research scope
+  
+  
 Structured Markdown report generated (v3.0):
-  ├── 🚨 Alerts & Anomalies
-  ├── Executive Summary (from top-scored findings)
-  ├── Key Findings (Web / GitHub / Community)
-  ├── 💰 Open Bounties & Issues
-  ├── 📈 Trend Analysis & Sentiment
-  ├── 🌱 Suggested Sub-Topics
-  └── Knowledge Base Stats
-  │
-  ▼
+    Alerts & Anomalies
+   Executive Summary (from top-scored findings)
+   Key Findings (Web / GitHub / Community)
+    Open Bounties & Issues
+    Trend Analysis & Sentiment
+    Suggested Sub-Topics
+   Knowledge Base Stats
+  
+  
 Report saved as digest → cron job scheduled → delivered via Telegram
 ```
 

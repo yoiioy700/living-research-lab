@@ -665,7 +665,7 @@ def _detect_anomalies(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
             anomalies.append({
                 "type": "volume_spike",
                 "severity": "high" if spike_pct >= 500 else "medium",
-                "message": f"📈 Finding volume spiked {spike_pct}% ({prev_count} → {current_count})",
+                "message": f"[VOLUME SPIKE] Finding volume spiked {spike_pct}% ({prev_count} → {current_count})",
                 "data": {"previous": prev_count, "current": current_count, "change_pct": spike_pct},
             })
 
@@ -699,7 +699,7 @@ def _detect_anomalies(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
             anomalies.append({
                 "type": "sentiment_flip",
                 "severity": "high",
-                "message": f"🔴 Sentiment flipped from positive ({prev_pos}%) to negative ({curr_neg}%)",
+                "message": f"[NEGATIVE FLIP] Sentiment flipped from positive ({prev_pos}%) to negative ({curr_neg}%)",
                 "data": {"previous": prev_sent, "current": curr_sent},
             })
         # Negative → Positive flip
@@ -707,7 +707,7 @@ def _detect_anomalies(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
             anomalies.append({
                 "type": "sentiment_flip",
                 "severity": "medium",
-                "message": f"🟢 Sentiment flipped from negative ({prev_neg}%) to positive ({curr_pos}%)",
+                "message": f"[POSITIVE FLIP] Sentiment flipped from negative ({prev_neg}%) to positive ({curr_pos}%)",
                 "data": {"previous": prev_sent, "current": curr_sent},
             })
 
@@ -740,7 +740,7 @@ def _detect_anomalies(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
             anomalies.append({
                 "type": "new_dominant_tag",
                 "severity": "low",
-                "message": f"🆕 New trending tag '{tag}' appeared {count} times (didn't exist before)",
+                "message": f"[NEW TAG] New trending tag '{tag}' appeared {count} times (didn't exist before)",
                 "data": {"tag": tag, "count": count},
             })
 
@@ -750,11 +750,11 @@ def _detect_anomalies(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
         "anomaly_count": len(anomalies),
         "anomalies": anomalies,
         "assessment": (
-            "⚠️ Significant anomalies detected — review recommended."
+            " Significant anomalies detected — review recommended."
             if any(a["severity"] == "high" for a in anomalies)
-            else "✅ No major anomalies detected."
+            else " No major anomalies detected."
             if not anomalies
-            else "ℹ️ Minor anomalies noted."
+            else " Minor anomalies noted."
         ),
     }
 
