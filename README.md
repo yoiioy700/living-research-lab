@@ -1,97 +1,92 @@
-# 🔬 Living Research Lab
+# Living Research Lab
 
-**Self-growing AI research agent built on [Hermes Agent](https://github.com/NousResearch/hermes-agent)**
+A self-growing research intelligence system built on [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research.
 
-> Built for the Nous Research Hermes Agent Hackathon 🏆
+Living Research Lab extends Hermes Agent with a persistent knowledge base and a structured research protocol. It spawns parallel subagents to gather intelligence from multiple sources simultaneously, stores findings in a SQLite database, generates structured reports, and schedules recurring updates delivered to Telegram.
 
-Living Research Lab is an autonomous research intelligence system. Tell it a topic → it spawns 3 parallel subagents to scrape the web, GitHub, and community sources → saves findings to a persistent knowledge base → generates a structured report → schedules daily updates delivered to your Telegram.
-
----
-
-## ✨ Features
-
-| Feature | How It Works |
-|---|---|
-| 🔀 **Parallel Research** | Spawns 3 subagents simultaneously (Web News + GitHub + Community) |
-| 🗄️ **Persistent Knowledge Base** | SQLite database stores all findings across sessions |
-| 📊 **Structured Reports** | Executive Summary, Key Findings, Trend Analysis, Sentiment |
-| ⏰ **Auto Daily Updates** | Cron scheduler runs research daily, delivers to Telegram |
-| 📱 **Multi-Platform** | Works from CLI, Telegram, Discord, Slack, WhatsApp |
-| 🧠 **Self-Improving** | Compares new data against historical findings to surface changes |
+Built for the **Nous Research Hermes Agent Hackathon**.
 
 ---
 
-## 🚀 Quick Start
+## Features
+
+- **Parallel research** — Spawns 3 subagents simultaneously to scrape web news, GitHub repositories, and community discussions (Reddit, Hacker News, arXiv)
+- **Persistent knowledge base** — All findings are stored in a SQLite database (`~/.hermes/research.db`) and persist across sessions
+- **Structured reports** — Generates Markdown reports with executive summary, key findings, trend analysis, and sentiment breakdown
+- **Automated daily updates** — Uses Hermes cron scheduler to repeat research daily and deliver results to Telegram
+- **Historical comparison** — Each new report compares against previous findings to surface what changed
+- **Multi-platform access** — Works from CLI, Telegram, Discord, Slack, or WhatsApp
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
 - [OpenRouter API key](https://openrouter.ai) (free signup)
-- [Firecrawl API key](https://firecrawl.dev) (free tier: 500 credits/month)
+- [Firecrawl API key](https://firecrawl.dev) (free tier available)
 
-### 1. Clone & Install
+### Installation
 
 ```bash
 git clone https://github.com/yoiioy700/living-research-lab.git
 cd living-research-lab
 
-# Install uv (if not installed)
+# Install uv if not already installed
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create virtual environment & install
+# Create virtual environment and install dependencies
 uv venv .venv --python 3.12
 source .venv/bin/activate
 uv pip install -e ".[all]"
 ```
 
-### 2. Configure API Keys
+### Configuration
 
 ```bash
 mkdir -p ~/.hermes
+
 cat > ~/.hermes/.env << 'EOF'
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
 FIRECRAWL_API_KEY=fc-your-key-here
 EOF
-```
 
-### 3. Set Model
-
-```bash
 hermes config set model google/gemini-2.0-flash-001
 ```
 
-### 4. Verify Setup
+### Verify
 
 ```bash
 hermes doctor
 ```
 
-You should see `✓ web`, `✓ research`, `✓ delegation` all green.
+Confirm that `web`, `research`, and `delegation` toolsets show as available.
 
-### 5. Run!
+### Usage
 
 ```bash
-# Basic test — add a topic
+# Add a research topic
 hermes chat -q "Add a research topic called 'Bitcoin ETF' to the research database"
 
-# Full research — spawns 3 parallel subagents
+# Run a full research cycle (spawns 3 parallel subagents)
 hermes chat -q "Research the latest developments in Solana DeFi ecosystem this week"
 ```
 
 ---
 
-## 📱 Telegram Setup (Optional)
+## Telegram Setup
 
-Talk to the research agent from your phone:
+To access the research agent from Telegram:
 
-1. Create a bot: Message [@BotFather](https://t.me/BotFather) → `/newbot`
-2. Get your User ID: Message [@userinfobot](https://t.me/userinfobot)
-3. Add to `~/.hermes/.env`:
+1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram using `/newbot`
+2. Get your numeric user ID via [@userinfobot](https://t.me/userinfobot)
+3. Add the following to `~/.hermes/.env`:
 
 ```bash
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-TELEGRAM_ALLOWED_USERS=YOUR_USER_ID
-TELEGRAM_HOME_CHANNEL=YOUR_USER_ID
+TELEGRAM_BOT_TOKEN=your-bot-token
+TELEGRAM_ALLOWED_USERS=your-user-id
+TELEGRAM_HOME_CHANNEL=your-user-id
 ```
 
 4. Start the gateway:
@@ -100,67 +95,69 @@ TELEGRAM_HOME_CHANNEL=YOUR_USER_ID
 hermes gateway
 ```
 
-5. Send a message to your bot on Telegram:
-
-> "riset tentang AI Safety minggu ini"
+5. Send a message to your bot on Telegram to start a research session.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-User Message → Hermes Agent reads SKILL.md
-  │
-  ├── research_db(add_topic)
-  ├── research_db(get_last_digest) — check history
-  │
-  ▼
-delegate_task (3 PARALLEL subagents):
-  ├── [1] Web News Agent      → web_search + web_extract
-  ├── [2] GitHub Agent        → GitHub trending repos
-  └── [3] Community Agent     → HN, Reddit, arXiv
-  │
-  ▼ (all 3 complete simultaneously)
-  │
-  ├── research_db(save_finding) × N  — persist to SQLite
-  │
-  ▼
-Generate Markdown Report:
-  ├── Executive Summary
-  ├── Key Findings (Web / GitHub / Community)
-  ├── Trend Analysis + Sentiment
-  └── Knowledge Base Stats
-  │
-  ├── research_db(save_digest)
-  ├── schedule_cronjob("every 24h", deliver="telegram")
-  │
-  ▼
-Deliver (CLI output or Telegram message)
+User request
+  |
+  v
+Hermes Agent loads Living Research Lab skill (SKILL.md)
+  |
+  |-- research_db: register topic, check historical data
+  |
+  v
+delegate_task (batch mode, 3 parallel subagents):
+  |-- Web News Agent       (web_search + web_extract)
+  |-- GitHub Agent         (GitHub repository search)
+  |-- Community Agent      (Hacker News, Reddit, arXiv)
+  |
+  v
+All findings saved to SQLite via research_db
+  |
+  v
+Structured Markdown report generated
+  |-- Executive Summary
+  |-- Key Findings (categorized by source)
+  |-- Trend Analysis and Sentiment
+  |-- Comparison with previous report
+  |
+  v
+Report saved as digest, cron job scheduled for daily updates
 ```
 
 ---
 
-## 🧩 Components
+## Project Structure
+
+This project is a fork of [hermes-agent](https://github.com/NousResearch/hermes-agent) with the following additions:
 
 | File | Description |
 |---|---|
-| `tools/research_db_tool.py` | SQLite persistence — 7 actions (add_topic, save_finding, get_findings, list_topics, remove_topic, save_digest, get_last_digest) |
-| `skills/research/living-research-lab/SKILL.md` | Orchestration instructions — teaches Hermes the full research protocol |
-| `toolsets.py` | Modified — added `research_db` to all platform toolsets |
-| `model_tools.py` | Modified — added tool discovery for research_db |
+| `tools/research_db_tool.py` | SQLite-backed research knowledge base with 7 operations: add_topic, save_finding, get_findings, list_topics, remove_topic, save_digest, get_last_digest |
+| `skills/research/living-research-lab/SKILL.md` | Skill definition that teaches Hermes the full research orchestration protocol |
+| `tests/tools/test_research_db_tool.py` | 23 unit tests covering all database operations |
+
+Modified files:
+- `toolsets.py` — Added `research_db` to core tool list
+- `model_tools.py` — Added `research_db_tool` to tool discovery
 
 ---
 
-## 🧪 Tests
+## Tests
 
 ```bash
 source .venv/bin/activate
 python -m pytest tests/tools/test_research_db_tool.py -v
-# 23 tests, all passing ✅
 ```
+
+All 23 tests passing.
 
 ---
 
-## 📄 License
+## License
 
 Built on top of [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research.
