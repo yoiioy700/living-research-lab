@@ -86,6 +86,16 @@ def _init_db():
 
             CREATE INDEX IF NOT EXISTS idx_digests_topic_date
                 ON digests(topic_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS alerts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_id    INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+                condition   TEXT    NOT NULL,  -- e.g. 'sentiment_shift', 'volume_spike', 'keyword'
+                threshold   TEXT,              -- JSON config for the condition
+                enabled     INTEGER NOT NULL DEFAULT 1,
+                last_fired  TEXT,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
         """)
 
 
@@ -260,6 +270,222 @@ def _get_last_digest(conn: sqlite3.Connection, topic: str) -> Dict:
     return {"success": True, "topic": topic, "digest": dict(digest)}
 
 
+def _get_analytics(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
+    """Get analytics and trend data for a topic."""
+    row = conn.execute("SELECT id FROM topics WHERE name=?", (topic,)).fetchone()
+    if not row:
+        return {"success": False, "error": f"Topic '{topic}' not found."}
+
+    topic_id = row["id"]
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    prev_since = (datetime.now(timezone.utc) - timedelta(days=days * 2)).isoformat()
+
+    # Current period counts
+    current = conn.execute(
+        "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ?",
+        (topic_id, since),
+    ).fetchone()["cnt"]
+
+    # Previous period counts (for comparison)
+    previous = conn.execute(
+        "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND found_at < ?",
+        (topic_id, prev_since, since),
+    ).fetchone()["cnt"]
+
+    # Sentiment breakdown (current period)
+    sentiments = conn.execute(
+        """SELECT sentiment, COUNT(*) as cnt FROM findings
+           WHERE topic_id=? AND found_at >= ? AND sentiment IS NOT NULL
+           GROUP BY sentiment""",
+        (topic_id, since),
+    ).fetchall()
+    sentiment_map = {s["sentiment"]: s["cnt"] for s in sentiments}
+    total_with_sentiment = sum(sentiment_map.values())
+
+    sentiment_pct = {}
+    if total_with_sentiment > 0:
+        for s in ["positive", "neutral", "negative"]:
+            sentiment_pct[s] = round(sentiment_map.get(s, 0) / total_with_sentiment * 100, 1)
+
+    # Top tags (current period)
+    tag_rows = conn.execute(
+        "SELECT tags FROM findings WHERE topic_id=? AND found_at >= ? AND tags IS NOT NULL",
+        (topic_id, since),
+    ).fetchall()
+    tag_counts = {}
+    for tr in tag_rows:
+        try:
+            for tag in json.loads(tr["tags"]):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        except Exception:
+            pass
+    top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Volume change
+    volume_change = None
+    if previous > 0:
+        volume_change = round((current - previous) / previous * 100, 1)
+
+    # Total all-time
+    total_all_time = conn.execute(
+        "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=?", (topic_id,)
+    ).fetchone()["cnt"]
+
+    # Digest count
+    digest_count = conn.execute(
+        "SELECT COUNT(*) as cnt FROM digests WHERE topic_id=?", (topic_id,)
+    ).fetchone()["cnt"]
+
+    return {
+        "success": True,
+        "topic": topic,
+        "period_days": days,
+        "findings_this_period": current,
+        "findings_previous_period": previous,
+        "volume_change_pct": volume_change,
+        "sentiment_breakdown": sentiment_pct,
+        "top_tags": top_tags,
+        "total_findings_all_time": total_all_time,
+        "total_digests": digest_count,
+        "should_create_skill": total_all_time >= 20,
+        "skill_recommendation": (
+            f"You have {total_all_time} findings on '{topic}'. "
+            "Consider creating a dedicated skill using skill_manage to "
+            "add specialized data sources, custom scrapers, or domain-specific "
+            "analysis for this topic."
+        ) if total_all_time >= 20 else None,
+    }
+
+
+def _set_alert(conn: sqlite3.Connection, topic: str, data: Optional[Dict]) -> Dict:
+    """Set an alert condition for a topic."""
+    if not data:
+        return {"success": False, "error": "'data' is required. Include 'condition' and optional 'threshold'."}
+
+    condition = data.get("condition", "")
+    valid_conditions = ["sentiment_shift", "volume_spike", "keyword"]
+    if condition not in valid_conditions:
+        return {
+            "success": False,
+            "error": f"Invalid condition '{condition}'. Valid: {valid_conditions}",
+        }
+
+    conn.execute("INSERT OR IGNORE INTO topics (name) VALUES (?)", (topic,))
+    row = conn.execute("SELECT id FROM topics WHERE name=?", (topic,)).fetchone()
+    if not row:
+        return {"success": False, "error": f"Could not find or create topic '{topic}'."}
+
+    threshold = json.dumps(data.get("threshold", {})) if data.get("threshold") else None
+
+    conn.execute(
+        "INSERT INTO alerts (topic_id, condition, threshold) VALUES (?, ?, ?)",
+        (row["id"], condition, threshold),
+    )
+    conn.commit()
+
+    return {
+        "success": True,
+        "message": f"Alert set: '{condition}' on topic '{topic}'.",
+        "condition": condition,
+        "threshold": data.get("threshold"),
+    }
+
+
+def _check_alerts(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
+    """Check all alerts for a topic and return which ones would fire."""
+    row = conn.execute("SELECT id FROM topics WHERE name=?", (topic,)).fetchone()
+    if not row:
+        return {"success": False, "error": f"Topic '{topic}' not found."}
+
+    topic_id = row["id"]
+    alerts = conn.execute(
+        "SELECT id, condition, threshold FROM alerts WHERE topic_id=? AND enabled=1",
+        (topic_id,),
+    ).fetchall()
+
+    if not alerts:
+        return {"success": True, "topic": topic, "triggered": [], "message": "No alerts configured."}
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    prev_since = (datetime.now(timezone.utc) - timedelta(days=days * 2)).isoformat()
+
+    triggered = []
+    for alert in alerts:
+        condition = alert["condition"]
+        threshold_raw = alert["threshold"]
+        threshold = json.loads(threshold_raw) if threshold_raw else {}
+
+        if condition == "sentiment_shift":
+            # Check if negative sentiment increased significantly
+            current_neg = conn.execute(
+                "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND sentiment='negative'",
+                (topic_id, since),
+            ).fetchone()["cnt"]
+            prev_neg = conn.execute(
+                "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND found_at < ? AND sentiment='negative'",
+                (topic_id, prev_since, since),
+            ).fetchone()["cnt"]
+            min_increase = threshold.get("min_increase_pct", 50)
+            if prev_neg > 0 and current_neg > prev_neg:
+                increase = (current_neg - prev_neg) / prev_neg * 100
+                if increase >= min_increase:
+                    triggered.append({
+                        "alert_id": alert["id"],
+                        "condition": "sentiment_shift",
+                        "message": f"Negative sentiment increased by {increase:.0f}% ({prev_neg} -> {current_neg} findings)",
+                    })
+
+        elif condition == "volume_spike":
+            current_count = conn.execute(
+                "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ?",
+                (topic_id, since),
+            ).fetchone()["cnt"]
+            prev_count = conn.execute(
+                "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND found_at < ?",
+                (topic_id, prev_since, since),
+            ).fetchone()["cnt"]
+            min_spike = threshold.get("min_spike_pct", 100)
+            if prev_count > 0 and current_count > prev_count:
+                spike = (current_count - prev_count) / prev_count * 100
+                if spike >= min_spike:
+                    triggered.append({
+                        "alert_id": alert["id"],
+                        "condition": "volume_spike",
+                        "message": f"Finding volume spiked by {spike:.0f}% ({prev_count} -> {current_count})",
+                    })
+
+        elif condition == "keyword":
+            keywords = threshold.get("keywords", [])
+            for kw in keywords:
+                matches = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND summary LIKE ?",
+                    (topic_id, since, f"%{kw}%"),
+                ).fetchone()["cnt"]
+                if matches > 0:
+                    triggered.append({
+                        "alert_id": alert["id"],
+                        "condition": "keyword",
+                        "message": f"Keyword '{kw}' found in {matches} recent finding(s)",
+                    })
+
+    # Update last_fired for triggered alerts
+    for t in triggered:
+        conn.execute(
+            "UPDATE alerts SET last_fired=datetime('now') WHERE id=?",
+            (t["alert_id"],),
+        )
+    conn.commit()
+
+    return {
+        "success": True,
+        "topic": topic,
+        "total_alerts": len(alerts),
+        "triggered_count": len(triggered),
+        "triggered": triggered,
+        "action_required": len(triggered) > 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -267,6 +493,7 @@ def _get_last_digest(conn: sqlite3.Connection, topic: str) -> Dict:
 _VALID_ACTIONS = {
     "add_topic", "save_finding", "get_findings",
     "list_topics", "remove_topic", "save_digest", "get_last_digest",
+    "get_analytics", "set_alert", "check_alerts",
 }
 
 
@@ -319,6 +546,12 @@ def research_db(
                 result = _save_digest(conn, topic, data)
             elif action == "get_last_digest":
                 result = _get_last_digest(conn, topic)
+            elif action == "get_analytics":
+                result = _get_analytics(conn, topic, days)
+            elif action == "set_alert":
+                result = _set_alert(conn, topic, data)
+            elif action == "check_alerts":
+                result = _check_alerts(conn, topic, days)
             else:
                 result = {"success": False, "error": "Unreachable action."}
 
@@ -355,13 +588,22 @@ RESEARCH_DB_SCHEMA = {
         "- remove_topic: Delete a topic and all its findings\n"
         "- save_digest: Store a generated research report (data.digest required, "
         "optional data.sent_to)\n"
-        "- get_last_digest: Get the most recent report for a topic\n\n"
+        "- get_last_digest: Get the most recent report for a topic\n"
+        "- get_analytics: Get trend analytics — sentiment breakdown, volume changes, "
+        "top tags, and auto-skill recommendation when findings exceed 20\n"
+        "- set_alert: Configure smart alerts. data.condition can be: "
+        "'sentiment_shift' (fires when negative sentiment increases), "
+        "'volume_spike' (fires when finding count jumps), "
+        "'keyword' (fires when specific keywords appear). Optional data.threshold for tuning.\n"
+        "- check_alerts: Evaluate all alerts for a topic and return which ones triggered\n\n"
 
         "WHEN TO USE:\n"
         "- After gathering research from web: save_finding for each key discovery\n"
-        "- Before generating a report: get_findings to include historical context\n"
+        "- Before generating a report: get_findings + get_analytics for full context\n"
         "- After generating a report: save_digest to track what was already reported\n"
-        "- In cron jobs: use get_findings + get_last_digest to show what changed"
+        "- In cron jobs: check_alerts first, then get_findings + get_last_digest\n"
+        "- When get_analytics returns should_create_skill=true: use skill_manage to "
+        "create a dedicated skill for that topic with specialized data sources"
     ),
     "parameters": {
         "type": "object",

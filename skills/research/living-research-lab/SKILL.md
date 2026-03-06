@@ -1,21 +1,23 @@
 ---
 name: living-research-lab
-description: Orchestrates a self-growing research intelligence system — spawns parallel subagents to scrape web/GitHub/news, persists findings to a SQLite knowledge base, generates structured reports, and schedules recurring daily digests delivered to Telegram or Discord.
-version: 1.0.0
+description: Self-growing research intelligence system with parallel subagents, persistent knowledge base, smart alerts, trend analytics, and auto-skill creation.
+version: 2.0.0
 metadata:
   hermes:
-    tags: [research, intelligence, automation, parallel-agents, cron, telegram, knowledge-base]
+    tags: [research, intelligence, automation, parallel-agents, cron, telegram, knowledge-base, alerts, analytics]
     related_skills: [arxiv, duckduckgo-search]
 ---
 
-# Living Research Lab 🔬
+# Living Research Lab
 
 A self-growing research intelligence system. Each time you run it, Hermes:
-1. **Spawns 3 parallel subagents** to gather intelligence from different sources simultaneously
-2. **Saves each finding** to a persistent SQLite knowledge base via `research_db`
-3. **Compares against historical data** to surface what's changed since last time
-4. **Generates a structured Markdown report** with Executive Summary, Key Findings, and Trend Analysis
-5. **Schedules a recurring cron job** (if not already set) to repeat daily and deliver to Telegram/Discord
+1. Spawns 3 parallel subagents to gather intelligence from different sources simultaneously
+2. Saves each finding to a persistent SQLite knowledge base via `research_db`
+3. Checks smart alerts for significant changes (sentiment shifts, volume spikes, keywords)
+4. Runs trend analytics — sentiment breakdown, volume comparison, top tags
+5. Generates a structured Markdown report with Executive Summary, Key Findings, and Trend Analysis
+6. Schedules a recurring cron job (if not already set) to repeat daily and deliver to Telegram/Discord
+7. When findings exceed 20, recommends creating a dedicated skill for that topic (self-improvement)
 
 ---
 
@@ -26,6 +28,7 @@ User says something like:
 - "pantau perkembangan [topic] tiap hari"
 - "kasih gua report tentang [topic]"
 - "apa yang baru di [topic] minggu ini?"
+- "set alert kalo [topic] ada perubahan besar"
 - `/living-research-lab [topic]`
 
 ---
@@ -37,14 +40,24 @@ User says something like:
 ```
 research_db(action="add_topic", topic="<TOPIC>", data={"description": "<user's intent>"})
 research_db(action="get_last_digest", topic="<TOPIC>")
-research_db(action="get_findings", topic="<TOPIC>", days=7)
+research_db(action="get_analytics", topic="<TOPIC>", days=7)
 ```
 
-Note the number of existing findings and the date of the last digest. This lets the report highlight **what changed**.
+Note the analytics output: sentiment trends, volume changes, and whether `should_create_skill` is true.
 
 ---
 
-### Step 2 — Spawn 3 Parallel Research Subagents
+### Step 2 — Check Alerts (if any exist)
+
+```
+research_db(action="check_alerts", topic="<TOPIC>", days=7)
+```
+
+If any alerts triggered, include them prominently at the top of the report with an ALERT section.
+
+---
+
+### Step 3 — Spawn 3 Parallel Research Subagents
 
 Use `delegate_task` in **batch mode** with exactly 3 tasks:
 
@@ -71,7 +84,7 @@ Wait for all 3 to complete.
 
 ---
 
-### Step 3 — Persist All Findings
+### Step 4 — Persist All Findings
 
 For **each finding** returned by each subagent:
 
@@ -89,59 +102,67 @@ research_db(
 )
 ```
 
-Save ALL findings even if similar ones were found before — the system deduplicates on retrieval.
+Save ALL findings even if similar ones were found before.
 
 ---
 
-### Step 4 — Generate Structured Report
+### Step 5 — Generate Structured Report
 
 Retrieve combined data and write a structured report:
 
 ```
 research_db(action="get_findings", topic="<TOPIC>", days=7)
+research_db(action="get_analytics", topic="<TOPIC>", days=7)
 research_db(action="get_last_digest", topic="<TOPIC>")
 ```
 
 **Report format (STRICTLY follow this template):**
 
 ```markdown
-# 🔬 Research Lab Report: <TOPIC>
-**Generated:** <date>  |  **Sources this run:** <N>  |  **Total in DB:** <total>
+# Research Lab Report: <TOPIC>
+Generated: <date>  |  Sources this run: <N>  |  Total in DB: <total>
 
 ---
 
-## 📋 Executive Summary
+## ALERTS (only if check_alerts returned triggered items)
+- [ALERT TYPE]: [alert message]
+
+## Executive Summary
 [2-4 sentences: what's the biggest takeaway this week]
 
-## 🔍 Key Findings
-### 🌐 Web News
+## Key Findings
+### Web News
 - **[Source Title]** — [1-sentence finding] ([link])
 - ...
 
-### 💻 GitHub Activity
+### GitHub Activity
 - **[Repo Name]** — [1-sentence relevance] ([link])
 - ...
 
-### 💬 Community & Research
+### Community & Research
 - **[Post/Paper Title]** — [1-sentence finding] ([link])
 - ...
 
-## 📈 Trend Analysis
-**Sentiment:** [X% positive / Y% neutral / Z% negative]
-**What changed since last report:** [compare with historical data — note new developments, discontinued projects, shifted sentiment]
+## Trend Analysis
+Sentiment: [X% positive / Y% neutral / Z% negative]
+Volume change: [+/-X% vs previous period]
+Top tags: [tag1, tag2, tag3]
+What changed since last report: [compare with historical data]
 
-## 🗄️ Knowledge Base Stats
+## Knowledge Base Stats
 - Total findings in DB: <N>
 - First tracked: <date>
 - Last report sent: <date or "None">
+- Active alerts: <count>
+- Skill recommendation: [if should_create_skill is true, mention it]
 
 ---
-*Report auto-generated by Living Research Lab · Hermes Agent*
+Report auto-generated by Living Research Lab
 ```
 
 ---
 
-### Step 5 — Save Digest & Schedule Cron
+### Step 6 — Save Digest & Schedule Cron
 
 **Save the report:**
 ```
@@ -152,6 +173,12 @@ research_db(
 )
 ```
 
+**Set up default alerts** if none exist for this topic:
+```
+research_db(action="set_alert", topic="<TOPIC>", data={"condition": "sentiment_shift", "threshold": {"min_increase_pct": 50}})
+research_db(action="set_alert", topic="<TOPIC>", data={"condition": "volume_spike", "threshold": {"min_spike_pct": 100}})
+```
+
 **Check if cron already exists** before scheduling (to avoid duplicates):
 ```
 list_cronjobs()
@@ -160,7 +187,7 @@ list_cronjobs()
 If no cron for this topic exists, schedule a daily update:
 ```
 schedule_cronjob(
-  prompt="Generate a Living Research Lab report about '<TOPIC>'. Use the research_db tool (action=get_findings, days=1) to get recent findings, then spawn 3 parallel subagents with delegate_task to gather fresh intelligence from web, GitHub, and community sources. Save all new findings to research_db, generate a structured Markdown report following the Living Research Lab format, save the digest (research_db action=save_digest), and deliver the report as your final response.",
+  prompt="Generate a Living Research Lab report about '<TOPIC>'. First check_alerts, then spawn 3 parallel subagents with delegate_task to gather fresh intelligence. Save all findings to research_db, run get_analytics, generate a structured report, save the digest, and deliver the report.",
   schedule="every 24h",
   name="LRL: <TOPIC>",
   deliver="telegram"
@@ -169,7 +196,26 @@ schedule_cronjob(
 
 ---
 
-### Step 6 — Deliver Report
+### Step 7 — Auto Skill Creation (Self-Improvement)
+
+If `get_analytics` returned `should_create_skill: true` (20+ findings on a topic):
+
+1. Analyze the top tags and most common source domains from the findings
+2. Use `skill_manage` to create a new dedicated skill for the topic:
+
+```
+skill_manage(
+  action="create",
+  name="<topic-slug>-research",
+  content="---\nname: <topic-slug>-research\ndescription: Specialized research skill for <TOPIC> ...\n---\n\n# <TOPIC> Specialized Research\n\nThis skill was auto-generated by Living Research Lab after collecting 20+ findings.\n\n## Specialized Data Sources\n[List domain-specific sources discovered from findings, e.g. specific APIs, dashboards, data feeds]\n\n## Custom Analysis\n[Topic-specific analysis instructions based on most common tags and patterns]\n"
+)
+```
+
+3. Tell the user: "I've created a dedicated skill for '<TOPIC>' based on accumulated research data. Future research on this topic will use specialized data sources."
+
+---
+
+### Step 8 — Deliver Report
 
 Return the full Markdown report as your final response. If running via messaging platform, the structured Markdown will render beautifully.
 
@@ -179,8 +225,11 @@ Return the full Markdown report as your final response. If running via messaging
 
 - **ALWAYS** use `delegate_task` in batch mode (3 parallel tasks) — never research sequentially
 - **ALWAYS** save findings to `research_db` before generating the report
-- **ALWAYS** compare with historical data (get_last_digest + get_findings with days=30) to highlight changes
+- **ALWAYS** run `check_alerts` before the report to surface urgent changes
+- **ALWAYS** run `get_analytics` for trend data and skill recommendations
+- **ALWAYS** compare with historical data (get_last_digest + get_findings with days=30)
 - **NEVER** create a duplicate cron job — check `list_cronjobs` first
+- **NEVER** skip setting up default alerts for new topics
 - If `research_db` returns an error (DB not available), proceed without it but note this in the report
 
 ---
@@ -189,14 +238,23 @@ Return the full Markdown report as your final response. If running via messaging
 
 ```
 User: "riset tentang Solana DeFi"
-→ Spawn 3 subagents (Web + GitHub + Community)
-→ Save findings to DB with topic="Solana DeFi"
-→ Generate report with Executive Summary + Key Findings + Trend Analysis
-→ Schedule daily cron "every 24h" to Telegram
+-> Check alerts (none yet, first time)
+-> Spawn 3 subagents (Web + GitHub + Community)
+-> Save findings to DB with topic="Solana DeFi"
+-> Run analytics (first run, no historical comparison)
+-> Generate report
+-> Set default alerts (sentiment_shift + volume_spike)
+-> Schedule daily cron "every 24h" to Telegram
 
 User: "apa yang baru di AI Safety minggu ini?"
-→ get_findings for last 7 days first (show historical context)
-→ Spawn 3 subagents for fresh data
-→ Generate comparative report (old vs new)
-→ Ask user if they want daily monitoring set up
+-> check_alerts: sentiment_shift triggered (negative +60%)
+-> get_findings for last 7 days
+-> Spawn 3 subagents for fresh data
+-> get_analytics: 25 total findings, should_create_skill=true
+-> Generate report with ALERT section at top
+-> Auto-create dedicated "ai-safety-research" skill
+
+User: "set alert kalo Bitcoin ada berita tentang ETF"
+-> set_alert(topic="Bitcoin", data={"condition": "keyword", "threshold": {"keywords": ["ETF", "SEC", "approval"]}})
+-> Confirm: "Alert set. I'll notify you when 'ETF', 'SEC', or 'approval' appears in Bitcoin research findings."
 ```
