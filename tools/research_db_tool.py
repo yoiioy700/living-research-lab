@@ -580,9 +580,9 @@ RESEARCH_DB_SCHEMA = {
 
         "ACTIONS:\n"
         "- add_topic: Register a topic to monitor (topic='Solana DeFi')\n"
-        "- save_finding: Save a research finding. Requires data.summary. Optional: "
+        "- save_finding: Save a research finding or bounty. Requires data.summary. Optional: "
         "data.source_url, data.source_title, data.sentiment ('positive'/'negative'/'neutral'), "
-        "data.tags (list of strings)\n"
+        "data.tags (list of strings, use ['bounty'] or ['open-issue'] for job/bounty findings)\n"
         "- get_findings: Get findings for a topic over last N days (default 7)\n"
         "- list_topics: List all monitored topics with finding counts\n"
         "- remove_topic: Delete a topic and all its findings\n"

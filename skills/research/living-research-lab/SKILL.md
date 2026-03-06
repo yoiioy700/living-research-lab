@@ -11,11 +11,11 @@ metadata:
 # Living Research Lab
 
 A self-growing research intelligence system. Each time you run it, Hermes:
-1. Spawns 3 parallel subagents to gather intelligence from different sources simultaneously
+1. Spawns 4 parallel subagents to gather intelligence (including open bounties/issues) simultaneously
 2. Saves each finding to a persistent SQLite knowledge base via `research_db`
 3. Checks smart alerts for significant changes (sentiment shifts, volume spikes, keywords)
 4. Runs trend analytics — sentiment breakdown, volume comparison, top tags
-5. Generates a structured Markdown report with Executive Summary, Key Findings, and Trend Analysis
+5. Generates a structured Markdown report with Executive Summary, Key Findings, Open Bounties, and Trend Analysis
 6. Schedules a recurring cron job (if not already set) to repeat daily and deliver to Telegram/Discord
 7. When findings exceed 20, recommends creating a dedicated skill for that topic (self-improvement)
 
@@ -28,6 +28,7 @@ User says something like:
 - "pantau perkembangan [topic] tiap hari"
 - "kasih gua report tentang [topic]"
 - "apa yang baru di [topic] minggu ini?"
+- "cariin open bounty atau paid issue untuk [topic]"
 - "set alert kalo [topic] ada perubahan besar"
 - `/living-research-lab [topic]`
 
@@ -57,9 +58,9 @@ If any alerts triggered, include them prominently at the top of the report with 
 
 ---
 
-### Step 3 — Spawn 3 Parallel Research Subagents
+### Step 3 — Spawn 4 Parallel Research Subagents
 
-Use `delegate_task` in **batch mode** with exactly 3 tasks:
+Use `delegate_task` in **batch mode** with exactly 4 tasks (the 4th is the Auto-Bounty Hunter):
 
 ```json
 {
@@ -75,12 +76,16 @@ Use `delegate_task` in **batch mode** with exactly 3 tasks:
     {
       "goal": "Search for technical discussions, forum posts, research papers, and expert opinions about '<TOPIC>'. Search Hacker News (hn.algolia.com), Reddit (reddit.com/search), and scholarly sources. Return a JSON list of: title, URL, 2-3 sentence summary, and sentiment (positive/negative/neutral).",
       "toolsets": ["web"]
+    },
+    {
+      "goal": "Act as an Auto-Bounty Hunter. Search GitHub, Gitcoin, Bounties Network, or other platforms for open bounties, paid issues, or job opportunities related to '<TOPIC>'. Use web_search with queries like 'site:github.com <TOPIC> label:bounty OR label:\"good first issue\"' AND 'open bounty <TOPIC>'. Return a JSON list of: issue/bounty title, URL, reward/context summary, and tag it with 'bounty' or 'open-issue'.",
+      "toolsets": ["web"]
     }
   ]
 }
 ```
 
-Wait for all 3 to complete.
+Wait for all 4 to complete.
 
 ---
 
@@ -143,6 +148,10 @@ Generated: <date>  |  Sources this run: <N>  |  Total in DB: <total>
 - **[Post/Paper Title]** — [1-sentence finding] ([link])
 - ...
 
+## 💰 Open Bounties & Issues (If Any)
+- **[Bounty/Issue Title]** — [Reward/Context] ([link])
+- ...
+
 ## Trend Analysis
 Sentiment: [X% positive / Y% neutral / Z% negative]
 Volume change: [+/-X% vs previous period]
@@ -187,7 +196,7 @@ list_cronjobs()
 If no cron for this topic exists, schedule a daily update:
 ```
 schedule_cronjob(
-  prompt="Generate a Living Research Lab report about '<TOPIC>'. First check_alerts, then spawn 3 parallel subagents with delegate_task to gather fresh intelligence. Save all findings to research_db, run get_analytics, generate a structured report, save the digest, and deliver the report.",
+  prompt="Generate a Living Research Lab report about '<TOPIC>'. First check_alerts, then spawn 4 parallel subagents with delegate_task to gather fresh intelligence + bounties. Save all findings to research_db, run get_analytics, generate a structured report, save the digest, and deliver the report.",
   schedule="every 24h",
   name="LRL: <TOPIC>",
   deliver="telegram"
@@ -223,7 +232,7 @@ Return the full Markdown report as your final response. If running via messaging
 
 ## Key Rules
 
-- **ALWAYS** use `delegate_task` in batch mode (3 parallel tasks) — never research sequentially
+- **ALWAYS** use `delegate_task` in batch mode (4 parallel tasks) — never research sequentially
 - **ALWAYS** save findings to `research_db` before generating the report
 - **ALWAYS** run `check_alerts` before the report to surface urgent changes
 - **ALWAYS** run `get_analytics` for trend data and skill recommendations
@@ -239,17 +248,17 @@ Return the full Markdown report as your final response. If running via messaging
 ```
 User: "riset tentang Solana DeFi"
 -> Check alerts (none yet, first time)
--> Spawn 3 subagents (Web + GitHub + Community)
+-> Spawn 4 subagents (Web + GitHub + Community + Bounty Hunter)
 -> Save findings to DB with topic="Solana DeFi"
 -> Run analytics (first run, no historical comparison)
--> Generate report
+-> Generate report (including 💰 Open Bounties section)
 -> Set default alerts (sentiment_shift + volume_spike)
 -> Schedule daily cron "every 24h" to Telegram
 
 User: "apa yang baru di AI Safety minggu ini?"
 -> check_alerts: sentiment_shift triggered (negative +60%)
 -> get_findings for last 7 days
--> Spawn 3 subagents for fresh data
+-> Spawn 4 subagents for fresh data
 -> get_analytics: 25 total findings, should_create_skill=true
 -> Generate report with ALERT section at top
 -> Auto-create dedicated "ai-safety-research" skill
