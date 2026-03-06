@@ -70,6 +70,8 @@ def _init_db():
                 source_title  TEXT,
                 sentiment     TEXT CHECK(sentiment IN ('positive', 'negative', 'neutral', NULL)),
                 tags          TEXT,  -- JSON array of tags
+                trust_score   REAL   DEFAULT 0.5,  -- 0.0-1.0 source reliability
+                engagement    INTEGER DEFAULT 0,   -- stars/upvotes/etc
                 found_at      TEXT    NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -97,6 +99,16 @@ def _init_db():
                 created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
             );
         """)
+
+        # Migration: add columns if they don't exist (for existing DBs)
+        try:
+            conn.execute("ALTER TABLE findings ADD COLUMN trust_score REAL DEFAULT 0.5")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE findings ADD COLUMN engagement INTEGER DEFAULT 0")
+        except Exception:
+            pass
 
 
 # Initialize DB when module loads
@@ -146,10 +158,12 @@ def _save_finding(conn: sqlite3.Connection, topic: str, data: Optional[Dict]) ->
 
     topic_id = row["id"]
     tags = json.dumps(data.get("tags", [])) if isinstance(data.get("tags"), list) else None
+    trust_score = _compute_trust_score(data.get("source_url", ""), data.get("source_title", ""))
+    engagement = data.get("engagement", 0)
 
     conn.execute(
-        """INSERT INTO findings (topic_id, summary, source_url, source_title, sentiment, tags)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO findings (topic_id, summary, source_url, source_title, sentiment, tags, trust_score, engagement)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             topic_id,
             summary,
@@ -157,6 +171,8 @@ def _save_finding(conn: sqlite3.Connection, topic: str, data: Optional[Dict]) ->
             data.get("source_title"),
             data.get("sentiment"),
             tags,
+            trust_score,
+            engagement,
         ),
     )
     conn.commit()
@@ -486,6 +502,263 @@ def _check_alerts(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
     }
 
 
+def _compute_trust_score(url: str, title: str) -> float:
+    """Compute a trust score (0.0-1.0) based on source domain reputation."""
+    url_lower = (url or "").lower()
+    high_trust = ["github.com", "arxiv.org", "nature.com", "ieee.org", "acm.org",
+                  "reuters.com", "bloomberg.com", "coindesk.com", "theblock.co",
+                  "techcrunch.com", "wired.com", "arstechnica.com", "hn.algolia.com"]
+    medium_trust = ["reddit.com", "twitter.com", "x.com", "medium.com", "substack.com",
+                    "dev.to", "hackernoon.com", "decrypt.co", "cointelegraph.com"]
+    for domain in high_trust:
+        if domain in url_lower:
+            return 0.9
+    for domain in medium_trust:
+        if domain in url_lower:
+            return 0.7
+    return 0.5  # unknown sources get baseline
+
+
+def _suggest_subtopics(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
+    """Analyze tag clusters from findings and suggest sub-topics for deeper research."""
+    row = conn.execute("SELECT id FROM topics WHERE name=?", (topic,)).fetchone()
+    if not row:
+        return {"success": False, "error": f"Topic '{topic}' not found."}
+
+    topic_id = row["id"]
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    # Get all tags from recent findings
+    tag_rows = conn.execute(
+        "SELECT tags FROM findings WHERE topic_id=? AND found_at >= ? AND tags IS NOT NULL",
+        (topic_id, since),
+    ).fetchall()
+
+    tag_counts = {}
+    for tr in tag_rows:
+        try:
+            for tag in json.loads(tr["tags"]):
+                tag = tag.strip().lower()
+                if tag and tag != topic.lower():
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        except Exception:
+            pass
+
+    # Find tag clusters with 3+ occurrences → suggest as sub-topics
+    suggestions = []
+    existing_topics = {r["name"].lower() for r in conn.execute("SELECT name FROM topics").fetchall()}
+    for tag, count in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True):
+        combined = f"{topic} — {tag}"
+        if count >= 3 and tag not in existing_topics and combined.lower() not in existing_topics:
+            suggestions.append({
+                "subtopic": combined,
+                "tag": tag,
+                "mention_count": count,
+                "reason": f"'{tag}' appeared in {count} findings — worth tracking separately",
+            })
+        if len(suggestions) >= 5:
+            break
+
+    return {
+        "success": True,
+        "topic": topic,
+        "suggestion_count": len(suggestions),
+        "suggested_subtopics": suggestions,
+        "auto_evolve_hint": (
+            "To auto-add a suggested sub-topic, call: "
+            "research_db(action='add_topic', topic='<subtopic name>', "
+            "data={'description': 'Auto-evolved from parent topic'})"
+        ) if suggestions else None,
+    }
+
+
+def _score_findings(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
+    """Rank findings by composite score (trust × recency × engagement)."""
+    row = conn.execute("SELECT id FROM topics WHERE name=?", (topic,)).fetchone()
+    if not row:
+        return {"success": False, "error": f"Topic '{topic}' not found."}
+
+    topic_id = row["id"]
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    findings = conn.execute(
+        """SELECT id, summary, source_url, source_title, sentiment, tags,
+                  trust_score, engagement, found_at
+           FROM findings
+           WHERE topic_id=? AND found_at >= ?
+           ORDER BY found_at DESC""",
+        (topic_id, since),
+    ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    scored = []
+    for f in findings:
+        entry = dict(f)
+        trust = entry.get("trust_score") or 0.5
+        engagement = entry.get("engagement") or 0
+
+        # Recency score: 1.0 for today, decays over days
+        try:
+            found = datetime.fromisoformat(entry["found_at"].replace("Z", "+00:00"))
+            age_days = max((now - found).total_seconds() / 86400, 0.1)
+            recency = max(1.0 / age_days, 0.1)
+        except Exception:
+            recency = 0.5
+
+        # Engagement bonus (log scale, capped)
+        import math
+        eng_bonus = min(math.log10(engagement + 1) / 4, 0.3)
+
+        composite = round(trust * 0.5 + min(recency, 1.0) * 0.3 + eng_bonus * 0.2, 3)
+        entry["composite_score"] = composite
+        entry["score_breakdown"] = {
+            "trust": round(trust, 2),
+            "recency": round(min(recency, 1.0), 2),
+            "engagement_bonus": round(eng_bonus, 2),
+        }
+        if entry.get("tags"):
+            try:
+                entry["tags"] = json.loads(entry["tags"])
+            except Exception:
+                pass
+        scored.append(entry)
+
+    scored.sort(key=lambda x: x["composite_score"], reverse=True)
+
+    return {
+        "success": True,
+        "topic": topic,
+        "count": len(scored),
+        "findings": scored[:20],  # top 20
+        "signal_summary": (
+            f"Top signal: '{scored[0]['source_title']}' (score {scored[0]['composite_score']})"
+            if scored else "No findings to score."
+        ),
+    }
+
+
+def _detect_anomalies(conn: sqlite3.Connection, topic: str, days: int) -> Dict:
+    """Detect anomalies: volume spikes, sentiment flips, new dominant tags."""
+    row = conn.execute("SELECT id FROM topics WHERE name=?", (topic,)).fetchone()
+    if not row:
+        return {"success": False, "error": f"Topic '{topic}' not found."}
+
+    topic_id = row["id"]
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    prev_since = (datetime.now(timezone.utc) - timedelta(days=days * 2)).isoformat()
+
+    anomalies = []
+
+    # 1. Volume spike detection
+    current_count = conn.execute(
+        "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ?",
+        (topic_id, since),
+    ).fetchone()["cnt"]
+    prev_count = conn.execute(
+        "SELECT COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND found_at < ?",
+        (topic_id, prev_since, since),
+    ).fetchone()["cnt"]
+
+    if prev_count > 0 and current_count > prev_count:
+        spike_pct = round((current_count - prev_count) / prev_count * 100, 1)
+        if spike_pct >= 200:
+            anomalies.append({
+                "type": "volume_spike",
+                "severity": "high" if spike_pct >= 500 else "medium",
+                "message": f"📈 Finding volume spiked {spike_pct}% ({prev_count} → {current_count})",
+                "data": {"previous": prev_count, "current": current_count, "change_pct": spike_pct},
+            })
+
+    # 2. Sentiment flip detection
+    def _get_sentiment_dist(start, end=None):
+        if end:
+            rows = conn.execute(
+                "SELECT sentiment, COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND found_at < ? AND sentiment IS NOT NULL GROUP BY sentiment",
+                (topic_id, start, end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT sentiment, COUNT(*) as cnt FROM findings WHERE topic_id=? AND found_at >= ? AND sentiment IS NOT NULL GROUP BY sentiment",
+                (topic_id, start),
+            ).fetchall()
+        dist = {r["sentiment"]: r["cnt"] for r in rows}
+        total = sum(dist.values()) or 1
+        return {k: round(v / total * 100, 1) for k, v in dist.items()}, total
+
+    curr_sent, curr_total = _get_sentiment_dist(since)
+    prev_sent, prev_total = _get_sentiment_dist(prev_since, since)
+
+    if prev_total >= 3 and curr_total >= 3:
+        prev_pos = prev_sent.get("positive", 0)
+        curr_pos = curr_sent.get("positive", 0)
+        prev_neg = prev_sent.get("negative", 0)
+        curr_neg = curr_sent.get("negative", 0)
+
+        # Positive → Negative flip
+        if prev_pos > 60 and curr_neg > 60:
+            anomalies.append({
+                "type": "sentiment_flip",
+                "severity": "high",
+                "message": f"🔴 Sentiment flipped from positive ({prev_pos}%) to negative ({curr_neg}%)",
+                "data": {"previous": prev_sent, "current": curr_sent},
+            })
+        # Negative → Positive flip
+        elif prev_neg > 60 and curr_pos > 60:
+            anomalies.append({
+                "type": "sentiment_flip",
+                "severity": "medium",
+                "message": f"🟢 Sentiment flipped from negative ({prev_neg}%) to positive ({curr_pos}%)",
+                "data": {"previous": prev_sent, "current": curr_sent},
+            })
+
+    # 3. New dominant tag detection
+    def _get_tags(start, end=None):
+        if end:
+            rows = conn.execute(
+                "SELECT tags FROM findings WHERE topic_id=? AND found_at >= ? AND found_at < ? AND tags IS NOT NULL",
+                (topic_id, start, end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT tags FROM findings WHERE topic_id=? AND found_at >= ? AND tags IS NOT NULL",
+                (topic_id, start),
+            ).fetchall()
+        counts = {}
+        for r in rows:
+            try:
+                for t in json.loads(r["tags"]):
+                    counts[t.lower()] = counts.get(t.lower(), 0) + 1
+            except Exception:
+                pass
+        return counts
+
+    curr_tags = _get_tags(since)
+    prev_tags = _get_tags(prev_since, since)
+
+    for tag, count in curr_tags.items():
+        if count >= 3 and tag not in prev_tags:
+            anomalies.append({
+                "type": "new_dominant_tag",
+                "severity": "low",
+                "message": f"🆕 New trending tag '{tag}' appeared {count} times (didn't exist before)",
+                "data": {"tag": tag, "count": count},
+            })
+
+    return {
+        "success": True,
+        "topic": topic,
+        "anomaly_count": len(anomalies),
+        "anomalies": anomalies,
+        "assessment": (
+            "⚠️ Significant anomalies detected — review recommended."
+            if any(a["severity"] == "high" for a in anomalies)
+            else "✅ No major anomalies detected."
+            if not anomalies
+            else "ℹ️ Minor anomalies noted."
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -494,6 +767,7 @@ _VALID_ACTIONS = {
     "add_topic", "save_finding", "get_findings",
     "list_topics", "remove_topic", "save_digest", "get_last_digest",
     "get_analytics", "set_alert", "check_alerts",
+    "suggest_subtopics", "score_findings", "detect_anomalies",
 }
 
 
@@ -552,6 +826,12 @@ def research_db(
                 result = _set_alert(conn, topic, data)
             elif action == "check_alerts":
                 result = _check_alerts(conn, topic, days)
+            elif action == "suggest_subtopics":
+                result = _suggest_subtopics(conn, topic, days)
+            elif action == "score_findings":
+                result = _score_findings(conn, topic, days)
+            elif action == "detect_anomalies":
+                result = _detect_anomalies(conn, topic, days)
             else:
                 result = {"success": False, "error": "Unreachable action."}
 
@@ -576,34 +856,36 @@ RESEARCH_DB_SCHEMA = {
     "description": (
         "Persistent research knowledge base that stores and retrieves research "
         "findings across sessions. Use this to build a growing knowledge base "
-        "about any topic you are tracking.\n\n"
+        "about any topic you are tracking. The agent learns what matters over time.\n\n"
 
         "ACTIONS:\n"
         "- add_topic: Register a topic to monitor (topic='Solana DeFi')\n"
         "- save_finding: Save a research finding or bounty. Requires data.summary. Optional: "
         "data.source_url, data.source_title, data.sentiment ('positive'/'negative'/'neutral'), "
-        "data.tags (list of strings, use ['bounty'] or ['open-issue'] for job/bounty findings)\n"
+        "data.tags (list of strings, use ['bounty'] or ['open-issue'] for bounties), "
+        "data.engagement (integer: stars/upvotes)\n"
         "- get_findings: Get findings for a topic over last N days (default 7)\n"
         "- list_topics: List all monitored topics with finding counts\n"
         "- remove_topic: Delete a topic and all its findings\n"
-        "- save_digest: Store a generated research report (data.digest required, "
-        "optional data.sent_to)\n"
+        "- save_digest: Store a generated research report (data.digest required)\n"
         "- get_last_digest: Get the most recent report for a topic\n"
-        "- get_analytics: Get trend analytics — sentiment breakdown, volume changes, "
-        "top tags, and auto-skill recommendation when findings exceed 20\n"
-        "- set_alert: Configure smart alerts. data.condition can be: "
-        "'sentiment_shift' (fires when negative sentiment increases), "
-        "'volume_spike' (fires when finding count jumps), "
-        "'keyword' (fires when specific keywords appear). Optional data.threshold for tuning.\n"
-        "- check_alerts: Evaluate all alerts for a topic and return which ones triggered\n\n"
+        "- get_analytics: Trend analytics — sentiment, volume, top tags, skill reco\n"
+        "- set_alert: Smart alerts (sentiment_shift / volume_spike / keyword)\n"
+        "- check_alerts: Evaluate all alerts for a topic\n"
+        "- suggest_subtopics: Analyze tag clusters and suggest sub-topics for deeper research. "
+        "Returns suggested sub-topic names based on recurring tags in findings.\n"
+        "- score_findings: Rank findings by composite score (trust × recency × engagement). "
+        "Returns top 20 highest-signal findings.\n"
+        "- detect_anomalies: Flag anomalies — volume spikes (>200%), sentiment flips, "
+        "new dominant tags. Returns severity-ranked anomaly list.\n\n"
 
         "WHEN TO USE:\n"
-        "- After gathering research from web: save_finding for each key discovery\n"
-        "- Before generating a report: get_findings + get_analytics for full context\n"
-        "- After generating a report: save_digest to track what was already reported\n"
-        "- In cron jobs: check_alerts first, then get_findings + get_last_digest\n"
-        "- When get_analytics returns should_create_skill=true: use skill_manage to "
-        "create a dedicated skill for that topic with specialized data sources"
+        "- After gathering research: save_finding for each discovery\n"
+        "- Before report: get_findings + get_analytics + detect_anomalies\n"
+        "- After report: save_digest, then suggest_subtopics to evolve research\n"
+        "- For ranking: score_findings to surface highest-signal items\n"
+        "- In cron jobs: check_alerts → detect_anomalies → get_findings\n"
+        "- When suggest_subtopics returns results: add_topic for promising sub-topics"
     ),
     "parameters": {
         "type": "object",
