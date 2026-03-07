@@ -8,6 +8,14 @@ It spawns 4 parallel subagents, stores findings with trust scoring, detects anom
 
 Built for the **Nous Research Hermes Agent Hackathon**.
 
+<p align="center">
+  <img src="assets/report-screenshot.png" alt="Living Research Lab Report Output" width="600" />
+  <br/>
+  <em>Example report output — auto-generated from 4 parallel subagents</em>
+</p>
+
+> 📄 **See full example reports:** [Bitcoin ETF](docs/examples/bitcoin-etf-report.md) · [Open Source LLMs](docs/examples/open-source-llms-report.md) · [AI Safety](docs/examples/ai-safety-report.md)
+
 ---
 
 ##  Features
@@ -23,6 +31,8 @@ Built for the **Nous Research Hermes Agent Hackathon**.
 |  **Structured Reports** | Executive summary, key findings, anomalies, bounties, trend analysis |
 | ⏰ **Automated Daily Updates** | Cron scheduler repeats research and delivers to Telegram |
 |  **Auto-Skill Creation** | When 20+ findings accumulate, generates a dedicated specialized skill |
+| 🧠 **Honcho User Memory** | Cross-session user modeling — remembers preferences, topics, and report style via Honcho |
+| 📊 **Research Score Card** | One-glance visual dashboard summarizing each research cycle |
 
 ---
 
@@ -111,6 +121,31 @@ hermes chat -q "Detect anomalies for Open Source LLMs over the last 14 days"
 # Step 4: Auto-evolve topics
 hermes chat -q "Suggest subtopics for Open Source LLMs. Auto-add any with 5+ mentions."
 ```
+
+**Example output:** See [`docs/examples/open-source-llms-report.md`](docs/examples/open-source-llms-report.md)
+
+### 3. AI Safety News Tracker
+
+Monitor AI safety developments — regulations, alignment research, evaluation frameworks, and governance.
+
+```bash
+# Step 1: Add safety topics
+hermes chat -q "Add these research topics: 'AI Safety', 'AI Regulation', 'LLM Alignment', 'AI Governance'"
+
+# Step 2: Run full research cycle with anomaly detection
+hermes chat -q "Research AI Safety developments this week. Focus on regulations, safety papers, and evaluation frameworks."
+
+# Step 3: Check for sentiment shifts (common in policy-heavy topics)
+hermes chat -q "Run detect_anomalies on AI Safety and check_alerts"
+
+# Step 4: Score findings and find the highest-signal items
+hermes chat -q "Score findings for AI Safety. Show me the top 5 most important items."
+
+# Step 5: Schedule daily monitoring
+hermes chat -q "Schedule a daily cron job for AI Safety research, deliver to Telegram"
+```
+
+**Example output:** See [`docs/examples/ai-safety-report.md`](docs/examples/ai-safety-report.md)
 
 ---
 

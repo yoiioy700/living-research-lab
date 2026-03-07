@@ -1,7 +1,7 @@
 ---
 name: living-research-lab
 description: Self-growing research intelligence system with parallel subagents, persistent knowledge base, smart alerts, trend analytics, anomaly detection, signal scoring, auto-topic evolution, and auto-skill creation.
-version: 2.0.0
+version: 3.0.0
 metadata:
   hermes:
     tags: [research, intelligence, automation, parallel-agents, cron, telegram, knowledge-base, alerts, analytics]
@@ -35,6 +35,32 @@ User says something like:
 ---
 
 ## Step-by-Step Orchestration
+
+### Step 0 — Load User Context (Honcho Integration)
+
+If Honcho is enabled (`HONCHO_API_KEY` is set), load the user's research preferences from cross-session memory:
+
+```
+# Honcho provides dialectic user modeling — the agent remembers:
+# - Which topics the user tracks most frequently
+# - Preferred report depth (brief vs detailed)
+# - Alert sensitivity preferences
+# - Favorite source domains
+# This context is injected into the system prompt before research begins.
+```
+
+Use Honcho's `context()` to retrieve the user's `peer_representation` and `peer_card`. Inject this as a system-level context block:
+
+```
+[HONCHO USER CONTEXT]
+This user prefers: <representation from Honcho>
+User profile: <peer_card from Honcho>
+[/HONCHO USER CONTEXT]
+```
+
+If Honcho is not available, skip this step and proceed normally.
+
+---
 
 ### Step 1 — Check & Register Topic
 
@@ -279,6 +305,35 @@ research_db(action="add_topic", topic="<suggested subtopic>", data={"description
 ### Step 8 — Deliver Report
 
 Return the full Markdown report as your final response. If running via messaging platform, the structured Markdown will render beautifully.
+
+---
+
+### Step 8.5 — Generate Research Score Card
+
+After delivering the report, generate a condensed **Research Score Card** — a one-glance summary of the research cycle:
+
+```markdown
+╔═══════════════════════════════════════════╗
+║         RESEARCH SCORE CARD               ║
+║         <TOPIC> — <DATE>                  ║
+╠═══════════════════════════════════════════╣
+║ 📊 Sources Scanned    : <N>               ║
+║ 🏆 Top Signal         : <title> (0.94)    ║
+║ 🔥 Hottest Tag        : <tag> (N mentions)║
+║ 📈 Volume Change      : +X%               ║
+║ 😊 Sentiment          : X% pos / Y% neg   ║
+║ 🚨 Anomalies          : <count>           ║
+║ 💰 Open Bounties      : <count>           ║
+║ 🌱 New Sub-Topics     : <count>           ║
+║ 🏅 Trust Leader       : <domain> (0.9)    ║
+║ 📦 Total in KB        : <N> findings      ║
+╚═══════════════════════════════════════════╝
+```
+
+This Score Card is ideal for:
+- Quick Telegram/Discord summaries
+- Demo video screenshots
+- Comparing research cycles over time
 
 ---
 
